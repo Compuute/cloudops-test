@@ -4,6 +4,7 @@
   become: true
   vars_files:
     - ../group_vars/all/vars.yml
+    # vault.yml loaded as fallback — overridden by secrets role if backend=vault|ssm
     - ../group_vars/all/vault.yml
 
   pre_tasks:
@@ -13,6 +14,8 @@
         cache_valid_time: 3600
 
   roles:
+    - role: secrets
+      tags: [always]            # secrets must load before every other role
     - role: common
       tags: [common, users, firewall, ssh, journald]
     - role: docker

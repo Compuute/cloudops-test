@@ -1,39 +1,46 @@
-module "vm" {
-  source = "../../modules/vm"
+# To migrate from Hetzner → AWS:
+#   1. Change source paths below to ../../providers/aws/*
+#   2. Add aws-specific variables (subnet_id, security_group_id from network outputs)
+#   3. Run terraform init && terraform plan
 
-  name           = "staging-app"
-  env            = "staging"
-  instance_count = 1
-  server_type    = "cx22"  # 2 vCPU, 4GB RAM
-  ssh_public_key = var.ssh_public_key
-  storage_size_gb = 40
-  prevent_destroy = false
+module "network" {
+  source = "../../providers/hetzner/network"
+
+  name             = "staging"
+  ssh_allowed_cidrs = ["0.0.0.0/0", "::/0"]  # TODO: lock to VPN in prod
 }
 
-module "networking" {
-  source = "../../modules/networking"
+module "compute" {
+  source = "../../providers/hetzner/compute"
 
-  name       = "staging"
-  domain     = var.domain
-  server_ids = module.vm.server_ids
-  server_ips = module.vm.server_ips
+  name               = "staging-app"
+  env                = "staging"
+  ssh_public_key     = var.ssh_public_key
+  private_network_id = module.network.private_network_id
+  instance_count     = 1
+  size_class         = "cx22"
+  db_size_class      = "cx22"
+  app_storage_gb     = 40
+  db_storage_gb      = 60
+  prevent_destroy    = false
 }
 
 module "storage" {
-  source = "../../modules/storage"
+  source = "../../providers/hetzner/storage"
 
   bucket_name    = "mycompany-staging-backups"
   env            = "staging"
   retention_days = 14
 }
 
-# generate ansible inventory from terraform outputs
 resource "local_file" "ansible_inventory" {
   filename        = "${path.module}/../../../ansible/inventory/staging/hosts.yml"
   file_permission = "0644"
   content         = templatefile("${path.module}/inventory.tftpl", {
-    servers = module.vm.server_ips
-    names   = module.vm.server_names
-    env     = "staging"
+    app_servers    = module.compute.app_public_ips
+    app_names      = module.compute.server_names
+    db_private_ip  = module.compute.db_private_ip
+    db_name        = module.compute.db_server_name
+    env            = "staging"
   })
 }

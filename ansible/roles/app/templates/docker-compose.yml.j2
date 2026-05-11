@@ -1,23 +1,44 @@
 ---
 name: "{{ app_name }}"
 
+# Network layout:
+#   frontend — nginx talks to app here
+#   backend  — app talks to postgres/redis here
+#   app container sits in both; postgres/redis only in backend
+#   nothing in backend is reachable from outside the host
+
+networks:
+  frontend:
+    driver: bridge
+    internal: false
+  backend:
+    driver: bridge
+    internal: true   # no outbound internet from db containers
+
 services:
   app:
     image: "{{ app_name }}:{{ app_image_tag | default('latest') }}"
     build:
       context: .
     restart: unless-stopped
+    networks:
+      - frontend
+      - backend
     ports:
       - "{{ app_bind }}:{{ app_port }}:{{ app_port }}"
     environment:
-      DATABASE_URL: "postgresql://{{ vault_postgresql_app_user }}:{{ vault_postgresql_app_password }}@host.docker.internal:{{ postgresql_port }}/{{ postgresql_db }}"
-      REDIS_URL: "redis://:{{ vault_redis_password }}@host.docker.internal:{{ redis_port }}/0"
+{% if db_host is defined %}
+      # multi-host: postgres lives on the db server
+      DATABASE_URL: "postgresql://{{ vault_postgresql_app_user }}:{{ vault_postgresql_app_password }}@{{ db_host }}:{{ postgresql_port }}/{{ postgresql_db }}"
+      REDIS_URL: "redis://:{{ vault_redis_password }}@{{ db_host }}:{{ redis_port }}/0"
+{% else %}
+      DATABASE_URL: "postgresql://{{ vault_postgresql_app_user }}:{{ vault_postgresql_app_password }}@postgres:{{ postgresql_port }}/{{ postgresql_db }}"
+      REDIS_URL: "redis://:{{ vault_redis_password }}@redis:{{ redis_port }}/0"
+{% endif %}
       LOG_FORMAT: json
       RAILS_ENV: "{{ env | default('production') }}"
     volumes:
       - "{{ app_storage_dir }}/app:/app/storage"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,10 +54,18 @@ services:
       driver: journald
       options:
         tag: "{{ app_name }}-app"
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp
 
   postgres:
     image: "postgres:{{ postgresql_version }}-bookworm"
     restart: unless-stopped
+    networks:
+      - backend
+    # no ports: block — postgres never reachable from host or outside
     environment:
       POSTGRES_DB: "{{ postgresql_db }}"
       POSTGRES_USER: "{{ vault_postgresql_app_user }}"
@@ -53,16 +82,22 @@ services:
       driver: journald
       options:
         tag: "{{ app_name }}-postgres"
+    security_opt:
+      - no-new-privileges:true
 
   redis:
     image: "redis:{{ redis_version }}-bookworm"
     restart: unless-stopped
+    networks:
+      - backend
+    # no ports: block — redis never reachable from outside backend network
     command: >
       redis-server
       --requirepass {{ vault_redis_password }}
       --appendonly yes
       --save 900 1
       --save 300 10
+      --bind 0.0.0.0
     volumes:
       - "{{ app_storage_dir }}/redis:/data"
     healthcheck:
@@ -75,7 +110,5 @@ services:
       driver: journald
       options:
         tag: "{{ app_name }}-redis"
-
-volumes:
-  app_storage:
-    driver: local
+    security_opt:
+      - no-new-privileges:true

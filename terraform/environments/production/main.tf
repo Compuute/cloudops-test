@@ -1,27 +1,30 @@
-module "vm" {
-  source = "../../modules/vm"
+# To migrate from Hetzner → AWS:
+#   Change source to ../../providers/aws/* and supply subnet/sg IDs from network outputs
 
-  name            = "prod-app"
-  env             = "production"
-  instance_count  = 2
-  server_type     = "cx32"  # 4 vCPU, 8GB RAM
-  ssh_public_key  = var.ssh_public_key
-  storage_size_gb = 100
-  prevent_destroy = true   # terraform destroy will fail without -target override
-}
-
-module "networking" {
-  source = "../../modules/networking"
+module "network" {
+  source = "../../providers/hetzner/network"
 
   name              = "production"
-  domain            = var.domain
-  server_ids        = module.vm.server_ids
-  server_ips        = module.vm.server_ips
   ssh_allowed_cidrs = var.ssh_allowed_cidrs
 }
 
+module "compute" {
+  source = "../../providers/hetzner/compute"
+
+  name               = "prod-app"
+  env                = "production"
+  ssh_public_key     = var.ssh_public_key
+  private_network_id = module.network.private_network_id
+  instance_count     = 2
+  size_class         = "cx32"
+  db_size_class      = "cx32"
+  app_storage_gb     = 100
+  db_storage_gb      = 200
+  prevent_destroy    = true
+}
+
 module "storage" {
-  source = "../../modules/storage"
+  source = "../../providers/hetzner/storage"
 
   bucket_name    = "mycompany-prod-backups"
   env            = "production"
@@ -32,8 +35,10 @@ resource "local_file" "ansible_inventory" {
   filename        = "${path.module}/../../../ansible/inventory/production/hosts.yml"
   file_permission = "0644"
   content         = templatefile("${path.module}/inventory.tftpl", {
-    servers = module.vm.server_ips
-    names   = module.vm.server_names
-    env     = "production"
+    app_servers   = module.compute.app_public_ips
+    app_names     = module.compute.server_names
+    db_private_ip = module.compute.db_private_ip
+    db_name       = module.compute.db_server_name
+    env           = "production"
   })
 }
