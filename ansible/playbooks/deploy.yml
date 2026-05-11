@@ -1,13 +1,17 @@
 ---
-# Deploy new application version
+# Deploy application update with rollback support
+#
 # Usage:
 #   ansible-playbook playbooks/deploy.yml -e "app_image_tag=v1.2.3"
-#   ansible-playbook playbooks/deploy.yml                          # uses 'latest'
+#   ansible-playbook playbooks/deploy.yml                           # uses latest
+#
+# Rollback:
+#   ansible-playbook playbooks/deploy.yml -e "app_image_tag=v1.1.0"
 
-- name: Deploy application update
+- name: Deploy application
   hosts: webservers
   become: true
-  serial: 1                          # rolling deploy — one host at a time
+  serial: 1
   vars_files:
     - ../group_vars/all/vars.yml
     - ../group_vars/all/vault.yml
@@ -17,12 +21,24 @@
       ansible.builtin.set_fact:
         resolved_tag: "{{ app_image_tag | default('latest') }}"
 
+    - name: Record current running tag for rollback
+      ansible.builtin.command: >
+        docker inspect --format='{{ "{{" }}.Config.Image{{ "}}" }}'
+        $(docker compose -f {{ app_dir }}/docker-compose.yml ps -q app 2>/dev/null | head -1)
+      register: current_image
+      changed_when: false
+      failed_when: false
+
+    - name: Set rollback tag
+      ansible.builtin.set_fact:
+        rollback_tag: "{{ current_image.stdout | default(resolved_tag) }}"
+
     - name: Print deploy summary
       ansible.builtin.debug:
-        msg: "Deploying {{ app_name }}:{{ resolved_tag }} to {{ inventory_hostname }} ({{ env }})"
+        msg: "Deploying {{ app_name }}:{{ resolved_tag }} (rollback: {{ rollback_tag }})"
 
   tasks:
-    - name: Pull latest application code
+    - name: Pull latest code
       ansible.builtin.git:
         repo: "{{ app_repo }}"
         dest: "{{ app_dir }}"
@@ -31,7 +47,7 @@
       become: true
       become_user: "{{ deploy_user }}"
 
-    - name: Build new Docker image
+    - name: Build new image
       community.docker.docker_image:
         name: "{{ app_name }}"
         tag: "{{ resolved_tag }}"
@@ -42,6 +58,10 @@
         force_source: true
       become: true
       become_user: "{{ deploy_user }}"
+
+    - name: Take pre-migration DB backup
+      ansible.builtin.command: "{{ backup_script_path }}"
+      changed_when: true
 
     - name: Run database migrations
       community.docker.docker_container:
@@ -54,7 +74,7 @@
             elif [ -f manage.py ]; then
               python manage.py migrate --noinput;
             else
-              echo 'No migration runner detected';
+              echo 'no migration runner found, skipping';
             fi
           "
         env:
@@ -64,16 +84,18 @@
           - "host.docker.internal:host-gateway"
         auto_remove: true
         detach: false
+        timeout: 300
       become: true
       become_user: "{{ deploy_user }}"
+      register: migration_result
+      failed_when: migration_result.status != 0
 
-    - name: Reload application via systemd
+    - name: Reload app via systemd
       ansible.builtin.systemd:
         name: app-reload.service
         state: started
-      become: true
 
-    - name: Wait for application to become healthy
+    - name: Wait for app to become healthy
       ansible.builtin.uri:
         url: "http://{{ app_bind }}:{{ app_port }}/health"
         status_code: 200
@@ -83,10 +105,39 @@
       until: health_check.status == 200
 
   post_tasks:
-    - name: Verify deployment via Nginx
+    - name: Smoke test via Nginx
       ansible.builtin.uri:
         url: "https://{{ nginx_server_name }}/health"
         validate_certs: false
         status_code: 200
       delegate_to: localhost
       become: false
+
+  rescue:
+    - name: "DEPLOY FAILED — rolling back to {{ rollback_tag }}"
+      ansible.builtin.debug:
+        msg: "Deploy failed. Rolling back to {{ rollback_tag }}"
+
+    - name: Rollback to previous image
+      ansible.builtin.shell: |
+        cd {{ app_dir }}
+        docker compose up -d --no-deps \
+          --no-build \
+          -e "IMAGE_TAG={{ rollback_tag }}" \
+          app
+      become: true
+      become_user: "{{ deploy_user }}"
+      when: rollback_tag != resolved_tag
+
+    - name: Wait for rollback to stabilise
+      ansible.builtin.uri:
+        url: "http://{{ app_bind }}:{{ app_port }}/health"
+        status_code: 200
+      retries: 5
+      delay: 6
+      register: rollback_health
+      until: rollback_health.status == 200
+
+    - name: Fail the play after rollback
+      ansible.builtin.fail:
+        msg: "Deploy of {{ resolved_tag }} failed. Rolled back to {{ rollback_tag }}."

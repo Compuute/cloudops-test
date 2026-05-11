@@ -22,13 +22,13 @@ on:
           - staging
           - production
       image_tag:
-        description: "Docker image tag (default: latest)"
+        description: "Image tag (default: git SHA)"
         required: false
-        default: latest
+        default: ""
 
 jobs:
   lint:
-    name: Lint
+    name: Lint & Security
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,26 +38,33 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install linting tools
+      - name: Install tools
         run: |
           pip install ansible ansible-lint
           sudo apt-get install -y shellcheck
 
-      - name: Run ansible-lint on deploy playbook
+      - name: ansible-lint
         working-directory: ansible
         run: ansible-lint playbooks/deploy.yml --profile production
 
-      - name: Run shellcheck on shell templates
+      - name: shellcheck
         run: |
           shellcheck --shell=bash --severity=warning \
             ansible/roles/backup/templates/app-reload.sh.j2 || true
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: app/
+          severity: CRITICAL
+          exit-code: "1"
 
   deploy-staging:
     name: Deploy → Staging
     needs: lint
     runs-on: ubuntu-latest
     environment: staging
-    # Auto-deploy on push to main; manual deploy on workflow_dispatch
     if: |
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
@@ -68,25 +75,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve image tag
+      - name: Resolve tag
         id: tag
-        run: |
-          TAG="${{ github.event.inputs.image_tag || github.sha }}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${{ github.event.inputs.image_tag || github.sha }}" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Python & Ansible
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Ansible and collections
+      - name: Install Ansible
         run: |
           pip install ansible
           ansible-galaxy collection install \
-            community.general \
-            community.postgresql \
-            community.docker \
-            ansible.posix
+            community.general community.postgresql community.docker ansible.posix
 
       - name: Write secrets
         run: |
@@ -95,7 +92,7 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Run deploy playbook (staging)
+      - name: Deploy to staging
         working-directory: ansible
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
@@ -107,7 +104,26 @@ jobs:
             --extra-vars "app_image_tag=${{ steps.tag.outputs.tag }}" \
             --diff
 
-      - name: Clean up secrets
+      - name: Run integration tests against staging
+        run: |
+          STAGING_URL="${{ vars.STAGING_URL }}"
+          echo "Testing ${STAGING_URL}"
+          curl -sf --retry 3 "${STAGING_URL}/health" | jq .
+          curl -sf --retry 3 --max-time 5 "${STAGING_URL}/" > /dev/null
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": ":x: Staging deploy failed for `${{ github.repository }}` — <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|view run>"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Cleanup secrets
         if: always()
         run: rm -f ~/.vault_pass ~/.ssh/deploy_key
 
@@ -115,7 +131,7 @@ jobs:
     name: Deploy → Production
     needs: deploy-staging
     runs-on: ubuntu-latest
-    environment: production          # requires manual approval in GitHub Environments
+    environment: production  # requires manual approval gate in GitHub Environments
     if: |
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.environment == 'production'
@@ -126,25 +142,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve image tag
+      - name: Resolve tag
         id: tag
-        run: |
-          TAG="${{ github.event.inputs.image_tag || github.sha }}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${{ github.event.inputs.image_tag || github.sha }}" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Python & Ansible
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Ansible and collections
+      - name: Install Ansible
         run: |
           pip install ansible
           ansible-galaxy collection install \
-            community.general \
-            community.postgresql \
-            community.docker \
-            ansible.posix
+            community.general community.postgresql community.docker ansible.posix
 
       - name: Write secrets
         run: |
@@ -153,7 +159,7 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Run deploy playbook (production) — rolling
+      - name: Deploy to production (rolling)
         working-directory: ansible
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
@@ -165,6 +171,30 @@ jobs:
             --extra-vars "app_image_tag=${{ steps.tag.outputs.tag }}" \
             --diff
 
-      - name: Clean up secrets
+      - name: Notify Slack on success
+        if: success()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": ":white_check_mark: Production deploy `${{ steps.tag.outputs.tag }}` succeeded — `${{ github.repository }}`"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": ":rotating_light: Production deploy FAILED — `${{ github.repository }}` — <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|view run>"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Cleanup secrets
         if: always()
         run: rm -f ~/.vault_pass ~/.ssh/deploy_key

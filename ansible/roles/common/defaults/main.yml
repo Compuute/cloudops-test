@@ -1,0 +1,12 @@
+---
+deploy_user: deploy
+deploy_group: deploy
+deploy_ssh_keys_dir: /etc/ssh/authorized_keys
+
+journald_max_retention_sec: 6month
+journald_split_mode: day
+
+ufw_allowed_ports:
+  - { port: 22, proto: tcp, comment: "SSH" }
+  - { port: 80, proto: tcp, comment: "HTTP" }
+  - { port: 443, proto: tcp, comment: "HTTPS" }
