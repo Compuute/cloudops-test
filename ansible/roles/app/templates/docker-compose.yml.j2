@@ -1,0 +1,82 @@
+---
+# Ansible managed — do not edit manually
+name: "{{ app_name }}"
+
+services:
+  app:
+    image: "{{ app_name }}:{{ app_image_tag | default('latest') }}"
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "{{ app_bind }}:{{ app_port }}:{{ app_port }}"
+    environment:
+      DATABASE_URL: "postgresql://{{ vault_postgresql_app_user }}:{{ vault_postgresql_app_password }}@host.docker.internal:{{ postgresql_port }}/{{ postgresql_db }}"
+      REDIS_URL: "redis://:{{ vault_redis_password }}@host.docker.internal:{{ redis_port }}/0"
+      LOG_FORMAT: json
+      RAILS_ENV: "{{ env | default('production') }}"
+    volumes:
+      - "{{ app_storage_dir }}/app:/app/storage"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:{{ app_port }}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: journald
+      options:
+        tag: "{{ app_name }}-app"
+
+  postgres:
+    image: "postgres:{{ postgresql_version }}-bookworm"
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "{{ postgresql_db }}"
+      POSTGRES_USER: "{{ vault_postgresql_app_user }}"
+      POSTGRES_PASSWORD: "{{ vault_postgresql_app_password }}"
+    volumes:
+      - "{{ app_storage_dir }}/postgresql:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ vault_postgresql_app_user }} -d {{ postgresql_db }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: journald
+      options:
+        tag: "{{ app_name }}-postgres"
+
+  redis:
+    image: "redis:{{ redis_version }}-bookworm"
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass {{ vault_redis_password }}
+      --appendonly yes
+      --save 900 1
+      --save 300 10
+    volumes:
+      - "{{ app_storage_dir }}/redis:/data"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "{{ vault_redis_password }}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: journald
+      options:
+        tag: "{{ app_name }}-redis"
+
+volumes:
+  app_storage:
+    driver: local

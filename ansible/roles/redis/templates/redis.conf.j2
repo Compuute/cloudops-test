@@ -1,0 +1,35 @@
+# Ansible managed — do not edit manually
+bind 127.0.0.1
+port {{ redis_port }}
+protected-mode yes
+
+requirepass {{ vault_redis_password }}
+
+# Persistence — RDB snapshots
+save 900 1
+save 300 10
+save 60 10000
+dbfilename dump.rdb
+dir {{ redis_data_dir }}
+
+# AOF persistence for durability
+appendonly yes
+appendfilename "appendonly.aof"
+appendfsync everysec
+no-appendfsync-on-rewrite no
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 64mb
+
+# Memory
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+
+# Logging
+loglevel notice
+logfile /var/log/redis/redis-server.log
+
+# Disable dangerous commands
+rename-command FLUSHALL ""
+rename-command FLUSHDB ""
+rename-command DEBUG ""
+rename-command CONFIG "REDIS_CONFIG_{{ vault_redis_password | hash('md5') | truncate(8, True, '') }}"

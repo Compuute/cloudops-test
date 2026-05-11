@@ -1,0 +1,92 @@
+---
+# Deploy new application version
+# Usage:
+#   ansible-playbook playbooks/deploy.yml -e "app_image_tag=v1.2.3"
+#   ansible-playbook playbooks/deploy.yml                          # uses 'latest'
+
+- name: Deploy application update
+  hosts: webservers
+  become: true
+  serial: 1                          # rolling deploy — one host at a time
+  vars_files:
+    - ../group_vars/all/vars.yml
+    - ../group_vars/all/vault.yml
+
+  pre_tasks:
+    - name: Resolve image tag
+      ansible.builtin.set_fact:
+        resolved_tag: "{{ app_image_tag | default('latest') }}"
+
+    - name: Print deploy summary
+      ansible.builtin.debug:
+        msg: "Deploying {{ app_name }}:{{ resolved_tag }} to {{ inventory_hostname }} ({{ env }})"
+
+  tasks:
+    - name: Pull latest application code
+      ansible.builtin.git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_dir }}"
+        version: "{{ resolved_tag }}"
+        force: false
+      become: true
+      become_user: "{{ deploy_user }}"
+
+    - name: Build new Docker image
+      community.docker.docker_image:
+        name: "{{ app_name }}"
+        tag: "{{ resolved_tag }}"
+        source: build
+        build:
+          path: "{{ app_dir }}"
+          pull: true
+        force_source: true
+      become: true
+      become_user: "{{ deploy_user }}"
+
+    - name: Run database migrations
+      community.docker.docker_container:
+        name: "{{ app_name }}-migrate"
+        image: "{{ app_name }}:{{ resolved_tag }}"
+        command: >
+          sh -c "
+            if command -v rails > /dev/null 2>&1; then
+              rails db:migrate;
+            elif [ -f manage.py ]; then
+              python manage.py migrate --noinput;
+            else
+              echo 'No migration runner detected';
+            fi
+          "
+        env:
+          DATABASE_URL: "postgresql://{{ vault_postgresql_app_user }}:{{ vault_postgresql_app_password }}@host.docker.internal:{{ postgresql_port }}/{{ postgresql_db }}"
+          RAILS_ENV: "{{ env | default('production') }}"
+        extra_hosts:
+          - "host.docker.internal:host-gateway"
+        auto_remove: true
+        detach: false
+      become: true
+      become_user: "{{ deploy_user }}"
+
+    - name: Reload application via systemd
+      ansible.builtin.systemd:
+        name: app-reload.service
+        state: started
+      become: true
+
+    - name: Wait for application to become healthy
+      ansible.builtin.uri:
+        url: "http://{{ app_bind }}:{{ app_port }}/health"
+        status_code: 200
+      retries: 10
+      delay: 6
+      register: health_check
+      until: health_check.status == 200
+
+  post_tasks:
+    - name: Verify deployment via Nginx
+      ansible.builtin.uri:
+        url: "https://{{ nginx_server_name }}/health"
+        validate_certs: false
+        status_code: 200
+      delegate_to: localhost
+      become: false

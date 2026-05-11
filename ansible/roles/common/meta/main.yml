@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: common
+  author: compuute
+  description: Base server hardening, users, firewall, journald
+  platforms:
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+dependencies: []

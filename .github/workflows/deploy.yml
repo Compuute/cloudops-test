@@ -1,0 +1,170 @@
+---
+name: Deploy Application
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+    paths:
+      - "app/**"
+      - "ansible/roles/app/**"
+      - "ansible/playbooks/deploy.yml"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: "Docker image tag (default: latest)"
+        required: false
+        default: latest
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install linting tools
+        run: |
+          pip install ansible ansible-lint
+          sudo apt-get install -y shellcheck
+
+      - name: Run ansible-lint on deploy playbook
+        working-directory: ansible
+        run: ansible-lint playbooks/deploy.yml --profile production
+
+      - name: Run shellcheck on shell templates
+        run: |
+          shellcheck --shell=bash --severity=warning \
+            ansible/roles/backup/templates/app-reload.sh.j2 || true
+
+  deploy-staging:
+    name: Deploy → Staging
+    needs: lint
+    runs-on: ubuntu-latest
+    environment: staging
+    # Auto-deploy on push to main; manual deploy on workflow_dispatch
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.image_tag || github.sha }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python & Ansible
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible and collections
+        run: |
+          pip install ansible
+          ansible-galaxy collection install \
+            community.general \
+            community.postgresql \
+            community.docker \
+            ansible.posix
+
+      - name: Write secrets
+        run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.vault_pass
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Run deploy playbook (staging)
+        working-directory: ansible
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          ansible-playbook playbooks/deploy.yml \
+            --inventory inventory/staging \
+            --vault-password-file ~/.vault_pass \
+            --private-key ~/.ssh/deploy_key \
+            --extra-vars "app_image_tag=${{ steps.tag.outputs.tag }}" \
+            --diff
+
+      - name: Clean up secrets
+        if: always()
+        run: rm -f ~/.vault_pass ~/.ssh/deploy_key
+
+  deploy-production:
+    name: Deploy → Production
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production          # requires manual approval in GitHub Environments
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.environment == 'production'
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.image_tag || github.sha }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python & Ansible
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible and collections
+        run: |
+          pip install ansible
+          ansible-galaxy collection install \
+            community.general \
+            community.postgresql \
+            community.docker \
+            ansible.posix
+
+      - name: Write secrets
+        run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.vault_pass
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Run deploy playbook (production) — rolling
+        working-directory: ansible
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          ansible-playbook playbooks/deploy.yml \
+            --inventory inventory/production \
+            --vault-password-file ~/.vault_pass \
+            --private-key ~/.ssh/deploy_key \
+            --extra-vars "app_image_tag=${{ steps.tag.outputs.tag }}" \
+            --diff
+
+      - name: Clean up secrets
+        if: always()
+        run: rm -f ~/.vault_pass ~/.ssh/deploy_key

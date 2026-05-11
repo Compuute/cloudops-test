@@ -1,0 +1,48 @@
+---
+- name: Provision web server
+  hosts: webservers
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+    - ../group_vars/all/vault.yml
+
+  pre_tasks:
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  roles:
+    - role: common
+      tags: [common, users, firewall, ssh, journald]
+    - role: docker
+      tags: [docker]
+    - role: postgresql
+      tags: [postgresql]
+    - role: redis
+      tags: [redis]
+    - role: app
+      tags: [app]
+    - role: nginx
+      tags: [nginx]
+    - role: backup
+      tags: [backup]
+
+  post_tasks:
+    - name: Verify Nginx is responding
+      ansible.builtin.uri:
+        url: "https://{{ nginx_server_name }}/nginx_status"
+        validate_certs: false
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      tags: [verify]
+
+    - name: Verify application is healthy
+      ansible.builtin.uri:
+        url: "https://{{ nginx_server_name }}/health"
+        validate_certs: false
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      tags: [verify]

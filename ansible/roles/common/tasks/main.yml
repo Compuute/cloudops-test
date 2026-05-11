@@ -1,0 +1,6 @@
+---
+- import_tasks: users.yml
+- import_tasks: ssh.yml
+- import_tasks: firewall.yml
+- import_tasks: journald.yml
+- import_tasks: packages.yml

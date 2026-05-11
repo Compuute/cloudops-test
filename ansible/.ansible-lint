@@ -1,0 +1,9 @@
+---
+profile: production
+exclude_paths:
+  - .git/
+  - roles/*/files/
+warn_list:
+  - yaml[line-length]
+skip_list:
+  - yaml[truthy]
