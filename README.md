@@ -1,7 +1,39 @@
-# cloudops-test
+# Avidity Cloud Infrastructure Engineer Test — Solution
 
-Infrastructure provisioning and deployment for a containerised web application.
+This repository is my solution to the Avidity CloudOps Engineer test. The objective was to build Ansible playbooks and automation for provisioning and deploying a containerised web application on Debian hosts, with a GitHub Actions CI/CD pipeline supporting multiple environments.
+
 Stack: Debian + Docker + Nginx + PostgreSQL + Redis, managed with Ansible and Terraform.
+
+---
+
+## What was built
+
+Each requirement from the test spec is addressed as follows:
+
+| Requirement | Implementation |
+|-------------|---------------|
+| PostgreSQL 18+ with custom config, full-privileges user + read-only user | `ansible/roles/postgresql/` |
+| Redis 8+ with custom config and disk persistence (RDB + AOF) | `ansible/roles/redis/` |
+| Nginx 1.29+ reverse proxy, `stub_status` restricted to localhost | `ansible/roles/nginx/` |
+| Ansible Vault for secrets (credentials, SSH keys) | `ansible/group_vars/all/vault.yml` + `roles/secrets/` |
+| `deploy` user with sudo, SSH-key only access | `ansible/roles/common/tasks/users.yml` |
+| Application in `/opt/app`, volumes in `/opt/storage` | `ansible/group_vars/all/vars.yml` |
+| Docker 29+ with docker-compose, healthchecks on all services | `ansible/roles/app/templates/docker-compose.yml.j2` |
+| App binds on `127.0.0.1:8000` only | `ansible/roles/nginx/templates/app.conf.j2` |
+| Image built from git repo, fallback to `app:latest` | `ansible/roles/app/tasks/deploy.yml` |
+| Journald: daily log files, 6-month retention | `ansible/roles/common/tasks/journald.yml` |
+| Application logs in JSON format | `docker-compose.yml.j2` + `nginx.conf.j2` |
+| Custom systemd service for application reloads | `ansible/roles/app/templates/app-reload.service.j2` |
+| Firewall: SSH / HTTP / HTTPS only | `ansible/roles/common/tasks/firewall.yml` |
+| sshd: no root login, no password authentication | `ansible/roles/common/tasks/ssh.yml` |
+| Hourly compressed DB backup uploaded to S3-compatible bucket | `ansible/roles/backup/templates/db_backup.sh.j2` |
+| Provision playbook | `ansible/playbooks/provision.yml` |
+| Deploy playbook | `ansible/playbooks/deploy.yml` |
+| GitHub Actions with `ansible-lint` + `shellcheck` | `.github/workflows/security.yml` |
+| Staging and production environments via GitHub Environments | `.github/workflows/deploy.yml` |
+| Database migration step (Rails / Django) | `ansible/playbooks/deploy.yml` |
+
+Beyond the spec, the solution also includes: Terraform IaC (Hetzner + AWS), Let's Encrypt TLS renewal, PgBouncer connection pooling, Prometheus + Grafana monitoring, auto-rollback on failed deploys, Molecule role tests, and network segmentation between app and database tiers.
 
 ---
 
