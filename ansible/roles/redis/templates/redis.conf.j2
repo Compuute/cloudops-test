@@ -1,4 +1,3 @@
-# Ansible managed — do not edit manually
 bind 127.0.0.1
 port {{ redis_port }}
 protected-mode yes
@@ -28,8 +27,7 @@ maxmemory-policy allkeys-lru
 loglevel notice
 logfile /var/log/redis/redis-server.log
 
-# Disable dangerous commands
+# disable commands that can nuke the whole dataset
 rename-command FLUSHALL ""
 rename-command FLUSHDB ""
 rename-command DEBUG ""
-rename-command CONFIG "REDIS_CONFIG_{{ vault_redis_password | hash('md5') | truncate(8, True, '') }}"

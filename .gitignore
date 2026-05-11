@@ -1,0 +1,10 @@
+.env
+*.retry
+*.vault_pass
+vault_pass*
+.vault_password
+*.pem
+*.key
+ansible/group_vars/all/vault.yml
+!ansible/group_vars/all/vault.example.yml
+ansible/.vault_pass

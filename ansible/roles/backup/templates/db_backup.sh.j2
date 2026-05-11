@@ -1,71 +1,45 @@
 #!/usr/bin/env bash
-# Ansible managed — do not edit manually
-# Hourly full PostgreSQL backup compressed and uploaded to S3-compatible storage
 set -euo pipefail
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-DB_NAME="{{ postgresql_db }}"
+DB="{{ postgresql_db }}"
 BACKUP_DIR="{{ backup_dir }}"
-BACKUP_FILE="${BACKUP_DIR}/${DB_NAME}_${TIMESTAMP}.sql.gz"
+BACKUP_FILE="${BACKUP_DIR}/${DB}_${TIMESTAMP}.sql.gz"
 S3_BUCKET="{{ backup_s3_bucket }}"
 S3_ENDPOINT="{{ backup_s3_endpoint }}"
-RETENTION_DAYS=30
+KEEP_DAYS=30
 
 export PGPASSWORD="{{ vault_postgresql_app_password }}"
 export AWS_ACCESS_KEY_ID="{{ vault_s3_access_key }}"
 export AWS_SECRET_ACCESS_KEY="{{ vault_s3_secret_key }}"
 
-log() {
-    echo "[$(date -Iseconds)] $*"
-}
+log() { echo "[$(date -Iseconds)] $*"; }
 
-log "Starting backup of database: ${DB_NAME}"
-
+log "backing up ${DB}"
 mkdir -p "${BACKUP_DIR}"
 
-# Dump and compress in one pass
 pg_dump \
-    --host=127.0.0.1 \
-    --port="{{ postgresql_port }}" \
-    --username="{{ vault_postgresql_app_user }}" \
-    --format=plain \
-    --no-password \
-    "${DB_NAME}" | gzip -9 > "${BACKUP_FILE}"
+  --host=127.0.0.1 \
+  --port="{{ postgresql_port }}" \
+  --username="{{ vault_postgresql_app_user }}" \
+  --format=plain \
+  --no-password \
+  "${DB}" | gzip -9 > "${BACKUP_FILE}"
 
-BACKUP_SIZE=$(du -sh "${BACKUP_FILE}" | cut -f1)
-log "Backup created: ${BACKUP_FILE} (${BACKUP_SIZE})"
+log "created ${BACKUP_FILE} ($(du -sh "${BACKUP_FILE}" | cut -f1))"
 
-# Upload to S3-compatible storage
-aws s3 cp \
-    "${BACKUP_FILE}" \
-    "s3://${S3_BUCKET}/postgresql/${DB_NAME}/${TIMESTAMP}.sql.gz" \
-    --endpoint-url "${S3_ENDPOINT}" \
-    --storage-class STANDARD_IA
+aws s3 cp "${BACKUP_FILE}" \
+  "s3://${S3_BUCKET}/db/${DB}/${TIMESTAMP}.sql.gz" \
+  --endpoint-url "${S3_ENDPOINT}" \
+  --storage-class STANDARD_IA
 
-log "Backup uploaded to s3://${S3_BUCKET}/postgresql/${DB_NAME}/${TIMESTAMP}.sql.gz"
+log "uploaded to s3"
 
-# Prune local backups older than retention period
-find "${BACKUP_DIR}" -name "${DB_NAME}_*.sql.gz" -mtime +${RETENTION_DAYS} -delete
-log "Local backups older than ${RETENTION_DAYS} days pruned"
+# clean up old local files
+find "${BACKUP_DIR}" -name "${DB}_*.sql.gz" -mtime "+${KEEP_DAYS}" -delete
 
-# Prune remote backups older than retention period
-aws s3 ls \
-    "s3://${S3_BUCKET}/postgresql/${DB_NAME}/" \
-    --endpoint-url "${S3_ENDPOINT}" | \
-    awk '{print $4}' | \
-    while read -r key; do
-        FILE_DATE=$(echo "${key}" | grep -oP '^\d{8}')
-        CUTOFF=$(date -d "-${RETENTION_DAYS} days" +%Y%m%d)
-        if [[ "${FILE_DATE}" < "${CUTOFF}" ]]; then
-            aws s3 rm \
-                "s3://${S3_BUCKET}/postgresql/${DB_NAME}/${key}" \
-                --endpoint-url "${S3_ENDPOINT}"
-            log "Removed remote backup: ${key}"
-        fi
-    done
+# TODO: send slack/pagerduty notification on failure
+# would need to wrap this in a trap and post to webhook
 
-unset PGPASSWORD
-unset AWS_ACCESS_KEY_ID
-unset AWS_SECRET_ACCESS_KEY
-
-log "Backup completed successfully"
+unset PGPASSWORD AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+log "done"

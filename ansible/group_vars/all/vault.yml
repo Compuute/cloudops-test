@@ -1,33 +1,4 @@
-# This file is encrypted with ansible-vault.
-# To edit: ansible-vault edit group_vars/all/vault.yml
-# To encrypt: ansible-vault encrypt group_vars/all/vault.yml
-#
-# Example plaintext (before encryption):
-# ---
-# vault_deploy_ssh_public_key: "ssh-ed25519 AAAA... deploy@ci"
-# vault_ssh_private_key_path: "/home/deploy/.ssh/id_ed25519"
-#
-# vault_postgresql_app_user: appuser
-# vault_postgresql_app_password: "changeme_strong_password"
-# vault_postgresql_readonly_user: readonly
-# vault_postgresql_readonly_password: "changeme_readonly_password"
-# vault_postgresql_replication_password: "changeme_replication"
-#
-# vault_redis_password: "changeme_redis_password"
-#
-# vault_s3_bucket: "mycompany-db-backups"
-# vault_s3_endpoint: "https://s3.eu-north-1.amazonaws.com"
-# vault_s3_access_key: "AKIAIOSFODNN7EXAMPLE"
-# vault_s3_secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-#
-# vault_nginx_ssl_cert: |
-#   -----BEGIN CERTIFICATE-----
-#   ...
-#   -----END CERTIFICATE-----
-# vault_nginx_ssl_key: |
-#   -----BEGIN PRIVATE KEY-----
-#   ...
-#   -----END PRIVATE KEY-----
-
+# ansible-vault encrypted — edit with: ansible-vault edit group_vars/all/vault.yml
+# unencrypted structure lives in vault.example.yml (gitignored)
 $ANSIBLE_VAULT;1.1;AES256
-# placeholder - encrypt with: ansible-vault encrypt group_vars/all/vault.yml
+# placeholder — replace this line with actual encrypted content before running
