@@ -1,4 +1,3 @@
-# normalized — identical keys to providers/hetzner/network/outputs.tf
 output "private_network_id" { value = aws_vpc.this.id }
 output "app_subnet_id"      { value = aws_subnet.app.id }
 output "db_subnet_id"       { value = aws_subnet.db.id }

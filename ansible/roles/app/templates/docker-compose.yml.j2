@@ -1,12 +1,6 @@
 ---
 name: "{{ app_name }}"
 
-# Network layout:
-#   frontend — nginx talks to app here
-#   backend  — app talks to postgres/redis here
-#   app container sits in both; postgres/redis only in backend
-#   nothing in backend is reachable from outside the host
-
 networks:
   frontend:
     driver: bridge
