@@ -1,4 +1,7 @@
 ---
-- import_tasks: install.yml
-- import_tasks: configure.yml
-- import_tasks: users.yml
+- name: Install PostgreSQL
+  import_tasks: install.yml
+- name: Configure PostgreSQL
+  import_tasks: configure.yml
+- name: Create database users
+  import_tasks: users.yml

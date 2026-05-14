@@ -22,7 +22,6 @@ module "compute" {
   db_size_class      = "cx22"
   app_storage_gb     = 40
   db_storage_gb      = 60
-  prevent_destroy    = false
 }
 
 module "storage" {

@@ -20,7 +20,6 @@ module "compute" {
   db_size_class      = "cx32"
   app_storage_gb     = 100
   db_storage_gb      = 200
-  prevent_destroy    = true
 }
 
 module "storage" {

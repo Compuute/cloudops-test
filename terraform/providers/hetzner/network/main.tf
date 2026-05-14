@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    hcloud = {
+      source  = "hetznercloud/hcloud"
+      version = "~> 1.47"
+    }
+  }
+}
+
 resource "hcloud_network" "private" {
   name     = "${var.name}-net"
   ip_range = var.private_cidr

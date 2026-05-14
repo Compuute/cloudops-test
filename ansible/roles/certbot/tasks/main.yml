@@ -25,10 +25,9 @@
       --email {{ certbot_email }}
       {% if certbot_staging %}--staging{% endif %}
       --redirect
+  changed_when: true
   when: not _certbot_cert.stat.exists
   notify: Reload nginx
-  # certbot --nginx modifies the nginx vhost in-place; nginx must be running
-  # If nginx isn't up yet, swap --nginx for --standalone and open port 80 first
 
 - name: Deploy post-renewal hook
   ansible.builtin.template:

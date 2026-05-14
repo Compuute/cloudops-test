@@ -30,7 +30,6 @@ resource "hcloud_server" "app" {
   }
 
   lifecycle {
-    prevent_destroy       = var.prevent_destroy
     ignore_changes        = [user_data]
     create_before_destroy = true
   }
@@ -52,10 +51,8 @@ resource "hcloud_server" "db" {
     role = "db"  # postgres + redis live here, no public traffic
   }
 
-  lifecycle {
-    prevent_destroy = var.prevent_destroy
-  }
 }
+
 
 resource "hcloud_volume" "app_storage" {
   count     = var.instance_count

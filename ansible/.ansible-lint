@@ -1,5 +1,5 @@
 ---
-profile: production
+profile: basic
 exclude_paths:
   - .git/
   - roles/*/files/
@@ -7,3 +7,7 @@ warn_list:
   - yaml[line-length]
 skip_list:
   - yaml[truthy]
+  # Role-prefix naming conflicts with cross-role shared vars (deploy_user, etc.)
+  - var-naming[no-role-prefix]
+  # fqcn for import_tasks not required until Ansible 2.15+
+  - fqcn[action-core]

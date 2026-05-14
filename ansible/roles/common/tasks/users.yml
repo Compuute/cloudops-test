@@ -27,7 +27,7 @@
   ansible.posix.authorized_key:
     user: "{{ deploy_user }}"
     key: "{{ vault_deploy_ssh_public_key }}"
-    key_options: 'from="{{ ops_allowed_cidrs | join(',') }}"'
+    key_options: "from=\"{{ ops_allowed_cidrs | join(',') }}\""
     state: present
     path: "{{ deploy_ssh_keys_dir }}/{{ deploy_user }}"
 
