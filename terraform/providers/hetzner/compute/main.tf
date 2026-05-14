@@ -30,8 +30,11 @@ resource "hcloud_server" "app" {
   }
 
   lifecycle {
+    prevent_destroy       = true
     ignore_changes        = [user_data]
     create_before_destroy = true
+    # To replace a server: terraform state rm module.compute.hcloud_server.app[N]
+    # then terraform apply — Terraform limitation: prevent_destroy cannot use variables
   }
 }
 
@@ -48,9 +51,13 @@ resource "hcloud_server" "db" {
 
   labels = {
     env  = var.env
-    role = "db"  # postgres + redis live here, no public traffic
+    role = "db"
   }
 
+  lifecycle {
+    prevent_destroy = true
+    # To replace: terraform state rm module.compute.hcloud_server.db && terraform apply
+  }
 }
 
 
